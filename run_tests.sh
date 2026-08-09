@@ -12,9 +12,13 @@ OUT="$DIR/build/test_game"
 mkdir -p "$DIR/build"
 
 echo "==> Kompiluje testy..."
+# test_game.cpp dołącza main.cpp, które używa klasy Test z test.h — definicje
+# jej metod są w test.cpp, więc ten plik też musimy podać do kompilacji,
+# inaczej linker zgłosi "Undefined symbols: Test::...".
 g++ -std=c++20 -Wall -Wextra -Dmain=game_main \
   -I"$DIR/src" \
   "$DIR/tests/test_game.cpp" \
+  "$DIR/src/test.cpp" \
   -o "$OUT"
 
 echo "==> Uruchamiam testy..."

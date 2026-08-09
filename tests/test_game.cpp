@@ -95,6 +95,29 @@ static void placeDiag(Game &g, Cell player, std::size_t x, std::size_t y,
     g.set(x + i, y + i, player);
 }
 
+// Kładzie `n` kamieni po anty-przekątnej (↗) zaczynając od (x, y) i idąc
+// w prawo-górę: (x, y), (x+1, y-1), ...  (y musi być >= n-1).
+static void placeAntiDiag(Game &g, Cell player, std::size_t x, std::size_t y,
+                          std::size_t n) {
+  for (std::size_t i = 0; i < n; ++i)
+    g.set(x + i, y - i, player);
+}
+
+// Owijka na aktualny detektor wygranej. Wszystkie testy wygranej idą przez
+// hasWon() — stary checkWin(...) z winningCords jest wycofany (patrz main.cpp).
+static bool won(Game &g, Cell player, std::size_t x, std::size_t y) {
+  return g.hasWon(player, x, y);
+}
+
+// Helper dla getEmptyBoxes(), które zwraca pary size_t.
+static bool contains_pair(const std::vector<std::pair<std::size_t, std::size_t>> &v,
+                          std::size_t x, std::size_t y) {
+  for (const auto &[cx, cy] : v)
+    if (cx == x && cy == y)
+      return true;
+  return false;
+}
+
 // ===========================================================================
 // Testy podstaw planszy (publiczne API: size / at / set)
 // ===========================================================================
@@ -156,50 +179,242 @@ TEST(overwrite_cell) {
 
 TEST(no_win_on_empty_board) {
   Game g;
-  CHECK(g.checkWin(Cell::Player1, 10, 10) == false);
+  CHECK(won(g, Cell::Player1, 10, 10) == false);
 }
 
 TEST(win_horizontal_five_in_a_row) {
   Game g;
   placeRow(g, Cell::Player1, 5, 8, 5); // (5,8)..(9,8)
-  CHECK(g.checkWin(Cell::Player1, 7, 8) == true);
+  CHECK(won(g, Cell::Player1, 7, 8) == true);
 }
 
 TEST(no_win_horizontal_four_in_a_row) {
   Game g;
   placeRow(g, Cell::Player1, 5, 8, 4); // tylko 4 kamienie
-  CHECK(g.checkWin(Cell::Player1, 6, 8) == false);
+  CHECK(won(g, Cell::Player1, 6, 8) == false);
 }
 
 TEST(win_vertical_five_in_a_column) {
   Game g;
   placeCol(g, Cell::Player2, 4, 3, 5); // (4,3)..(4,7)
-  CHECK(g.checkWin(Cell::Player2, 4, 5) == true);
+  CHECK(won(g, Cell::Player2, 4, 5) == true);
 }
 
 TEST(no_win_vertical_four_in_a_column) {
   Game g;
   placeCol(g, Cell::Player2, 4, 3, 4);
-  CHECK(g.checkWin(Cell::Player2, 4, 4) == false);
+  CHECK(won(g, Cell::Player2, 4, 4) == false);
 }
 
 TEST(win_diagonal_five) {
   Game g;
   placeDiag(g, Cell::Player1, 2, 2, 5); // (2,2)..(6,6)
-  CHECK(g.checkWin(Cell::Player1, 4, 4) == true);
+  CHECK(won(g, Cell::Player1, 4, 4) == true);
 }
 
 TEST(no_win_diagonal_four) {
   Game g;
   placeDiag(g, Cell::Player1, 2, 2, 4);
-  CHECK(g.checkWin(Cell::Player1, 3, 3) == false);
+  CHECK(won(g, Cell::Player1, 3, 3) == false);
 }
 
 TEST(win_only_counts_matching_player) {
   // Pięć kamieni w rzędzie, ale należą do Player1 — Player2 nie wygrywa.
   Game g;
   placeRow(g, Cell::Player1, 5, 8, 5);
-  CHECK(g.checkWin(Cell::Player2, 7, 8) == false);
+  CHECK(won(g, Cell::Player2, 7, 8) == false);
+}
+
+// ===========================================================================
+// Anty-przekątna (↗ / ↙) — czwarty kierunek wykrywany przez hasWon.
+// ===========================================================================
+
+TEST(win_antidiagonal_five) {
+  Game g;
+  // Linia (10,10),(11,9),(12,8),(13,7),(14,6) — pięć w kierunku ↗.
+  placeAntiDiag(g, Cell::Player1, 10, 10, 5);
+  CHECK(won(g, Cell::Player1, 12, 8) == true);
+}
+
+TEST(no_win_antidiagonal_four) {
+  Game g;
+  placeAntiDiag(g, Cell::Player2, 10, 10, 4);
+  CHECK(won(g, Cell::Player2, 11, 9) == false);
+}
+
+TEST(win_antidiagonal_detected_from_endpoint) {
+  // Ruch domykający na skraju linii, nie w środku.
+  Game g;
+  placeAntiDiag(g, Cell::Player1, 3, 8, 5); // (3,8),(4,7),(5,6),(6,5),(7,4)
+  CHECK(won(g, Cell::Player1, 3, 8) == true);
+  CHECK(won(g, Cell::Player1, 7, 4) == true);
+}
+
+// ===========================================================================
+// Semantyka hasWon: skan jest obcięty do 5 kroków w każdą stronę (pętla
+// `i < 5`). Te testy pilnują, że obcięcie nigdy nie gubi ani nie zmyśla
+// wygranej — regresja na wypadek zmian w tej pętli.
+// ===========================================================================
+
+TEST(haswon_true_from_any_stone_in_exact_five) {
+  // Piątka pozioma: ruch domykający z KAŻDEGO z pięciu pól ma dać wygraną.
+  Game g;
+  placeRow(g, Cell::Player1, 6, 9, 5); // (6,9)..(10,9)
+  for (std::size_t x = 6; x <= 10; ++x)
+    CHECK(won(g, Cell::Player1, x, 9) == true);
+}
+
+TEST(haswon_true_deep_inside_long_line) {
+  // Linia dłuższa niż zasięg skanu (9 kamieni). Sprawdzenie ze środka też
+  // musi widzieć piątkę, mimo że w jedną stronę jest tylko część kamieni.
+  Game g;
+  placeRow(g, Cell::Player2, 2, 5, 9); // (2,5)..(10,5)
+  CHECK(won(g, Cell::Player2, 6, 5) == true); // środek
+  CHECK(won(g, Cell::Player2, 2, 5) == true); // lewy skraj
+  CHECK(won(g, Cell::Player2, 10, 5) == true); // prawy skraj
+}
+
+TEST(haswon_neighbouring_stone_does_not_win) {
+  // KONTRAKT: hasWon jest wołane po ruchu, zawsze z player != Empty (nigdy
+  // z Cell::Empty — inaczej zliczyłoby ciąg pustych pól jako "wygraną").
+  // Tu sprawdzamy realny przypadek: kamień przeciwnika tuż obok cudzej
+  // piątki nie może fałszywie zaliczyć wygranej.
+  Game g;
+  placeRow(g, Cell::Player1, 5, 5, 5); // piątka Player1: (5,5)..(9,5)
+  g.set(4, 5, Cell::Player2);          // Player2 dostawiony z lewej
+  CHECK(won(g, Cell::Player2, 4, 5) == false);
+}
+
+TEST(haswon_directions_are_independent) {
+  // Krzyż: po 3 w poziomie i 3 w pionie przez wspólne pole — żaden kierunek
+  // nie ma piątki, więc brak wygranej (kierunki nie sumują się).
+  Game g;
+  placeRow(g, Cell::Player1, 8, 8, 3); // (8,8),(9,8),(10,8)
+  placeCol(g, Cell::Player1, 9, 6, 5); // przecina w (9,8), pion ma 5
+  // Pion ma piątkę -> wygrana; poziom sam w sobie nie.
+  CHECK(won(g, Cell::Player1, 9, 8) == true);
+  // Ale gdyby pion był krótszy, samo (8,8) w poziomie (3) nie wygrywa:
+  Game h;
+  placeRow(h, Cell::Player1, 8, 8, 3);
+  placeCol(h, Cell::Player1, 9, 6, 3);
+  CHECK(won(h, Cell::Player1, 9, 8) == false);
+}
+
+// ===========================================================================
+// Edge case'y planszy i długich linii — istotne przy milionach gier.
+// ===========================================================================
+
+TEST(win_at_top_left_corner) {
+  Game g;
+  placeRow(g, Cell::Player1, 0, 0, 5); // (0,0)..(4,0)
+  CHECK(won(g, Cell::Player1, 0, 0) == true);
+}
+
+TEST(win_at_bottom_right_corner) {
+  Game g; // 20x20 -> ostatni indeks 19
+  placeCol(g, Cell::Player2, 19, 15, 5); // (19,15)..(19,19)
+  CHECK(won(g, Cell::Player2, 19, 19) == true);
+}
+
+TEST(win_diagonal_into_corner) {
+  Game g;
+  placeDiag(g, Cell::Player1, 15, 15, 5); // (15,15)..(19,19)
+  CHECK(won(g, Cell::Player1, 19, 19) == true);
+}
+
+TEST(six_in_a_row_still_wins) {
+  // Więcej niż pięć w linii nadal jest wygraną (>= 5).
+  Game g;
+  placeRow(g, Cell::Player1, 3, 10, 6); // (3,10)..(8,10)
+  CHECK(won(g, Cell::Player1, 5, 10) == true);
+}
+
+TEST(gap_breaks_the_line) {
+  // Cztery, dziura, jeden — nie ma pięciu pod rząd.
+  Game g;
+  placeRow(g, Cell::Player1, 5, 8, 4); // (5,8)..(8,8)
+  g.set(10, 8, Cell::Player1);         // (9,8) puste
+  CHECK(won(g, Cell::Player1, 7, 8) == false);
+  CHECK(won(g, Cell::Player1, 10, 8) == false);
+}
+
+TEST(opponent_stone_blocks_the_line) {
+  // Kamień przeciwnika w środku przerywa zliczanie.
+  Game g;
+  placeRow(g, Cell::Player1, 5, 8, 5);
+  g.set(7, 8, Cell::Player2); // przerwa w rzędzie Player1
+  CHECK(won(g, Cell::Player1, 6, 8) == false);
+  CHECK(won(g, Cell::Player1, 8, 8) == false);
+}
+
+TEST(two_separate_short_lines_no_win) {
+  // Dwie oddzielne czwórki tego samego gracza nie sumują się do wygranej.
+  Game g;
+  placeRow(g, Cell::Player1, 2, 3, 4);
+  placeRow(g, Cell::Player1, 10, 3, 4);
+  CHECK(won(g, Cell::Player1, 3, 3) == false);
+  CHECK(won(g, Cell::Player1, 11, 3) == false);
+}
+
+TEST(win_on_small_board) {
+  // Plansza dokładnie 5x5: pełna kolumna to wygrana.
+  Game g(5);
+  placeCol(g, Cell::Player1, 2, 0, 5);
+  CHECK(won(g, Cell::Player1, 2, 2) == true);
+}
+
+TEST(no_win_on_too_small_board) {
+  // Plansza 4x4 nie mieści pięciu w linii.
+  Game g(4);
+  placeRow(g, Cell::Player1, 0, 0, 4);
+  CHECK(won(g, Cell::Player1, 0, 0) == false);
+}
+
+// ===========================================================================
+// getEmptyBoxes — używane w pętli rozgrywki (miliony wywołań).
+// ===========================================================================
+
+TEST(empty_boxes_count_on_fresh_board) {
+  Game g(5);
+  CHECK(g.getEmptyBoxes().size() == 25);
+}
+
+TEST(empty_boxes_excludes_filled_cells) {
+  Game g(5);
+  g.set(0, 0, Cell::Player1);
+  g.set(4, 4, Cell::Player2);
+  auto boxes = g.getEmptyBoxes();
+  CHECK(boxes.size() == 23);
+  CHECK(!contains_pair(boxes, 0, 0));
+  CHECK(!contains_pair(boxes, 4, 4));
+  CHECK(contains_pair(boxes, 2, 2));
+}
+
+TEST(empty_boxes_empty_when_board_full) {
+  Game g(3);
+  for (std::size_t y = 0; y < g.size(); ++y)
+    for (std::size_t x = 0; x < g.size(); ++x)
+      g.set(x, y, Cell::Player1);
+  CHECK(g.getEmptyBoxes().empty());
+}
+
+// ===========================================================================
+// Operator ! na Cell (przełączanie gracza w pętli rozgrywki).
+// ===========================================================================
+
+TEST(negate_cell_swaps_players) {
+  CHECK(!Cell::Player1 == Cell::Player2);
+  CHECK(!Cell::Player2 == Cell::Player1);
+}
+
+TEST(negate_empty_is_identity) {
+  // Empty nie ma "przeciwnika" — operator zwraca to samo.
+  CHECK(!Cell::Empty == Cell::Empty);
+}
+
+TEST(double_negate_is_identity) {
+  CHECK(!!Cell::Player1 == Cell::Player1);
+  CHECK(!!Cell::Player2 == Cell::Player2);
 }
 
 // ===========================================================================

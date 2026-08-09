@@ -1,0 +1,25 @@
+[build-system]
+requires = ["scikit-build-core>=0.8", "pybind11>=2.11"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "gomoku-rl"
+version = "0.1.0"
+description = "Gomoku Core (C++) + RL flow (PyTorch) via pybind11"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+# PyTorch celowo NIE jest twardą zależnością — instaluj wariant pod swój sprzęt
+# (CUDA/CPU/MPS) osobno. `pip install -e .[torch]` bierze domyślny wheel.
+torch = ["torch>=2.0"]
+
+[tool.scikit-build]
+# Pakiet Pythona zyje w python/gomoku; skompilowany _core lpowiata tam install().
+wheel.packages = ["python/gomoku"]
+cmake.version = ">=3.16"
+build-dir = "build/{wheel_tag}"
+
+[tool.scikit-build.cmake.define]
+# Sygnal dla CMake, ze budujemy przez scikit-build (patrz SKBUILD w CMakeLists).
+SKBUILD = "ON"
