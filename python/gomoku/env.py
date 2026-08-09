@@ -1,10 +1,19 @@
-"""Cienkie srodowisko RL wokol Core (gomoku._core.Game).
+"""Szkielet środowiska RL wokół Core (gomoku._core.Game).
 
-Celowo trzyma logike epizodu (reset/step/reward/terminacja) TUTAJ, w Pythonie,
-a nie w C++ — zeby latwo eksperymentowac z ksztaltem nagrody, self-play itd.
-Core dostarcza tylko: legalne ruchy, wykrycie wygranej i tensor obserwacji.
+To jest TEMPLATE — rusztowanie do wypełnienia. Metody są stubami z TODO;
+logikę epizodu (reset / step / nagroda / terminacja / perspektywa) piszesz sam.
 
-Akcje sa indeksami plaskimi: action = y * size + x  (spojne z legal_moves()).
+Co daje Ci Core (gotowe, patrz gomoku._core.Game):
+    game.size()                      -> int
+    game.at(x, y)                    -> Cell
+    game.set(x, y, cell)             -> None
+    game.undo_set(x, y)              -> None
+    game.is_legal(x, y)             -> bool
+    game.legal_moves()              -> list[int]   (indeksy y*size + x)
+    game.is_full()                  -> bool
+    game.has_won(player, x, y)      -> bool         (player != Cell.Empty)
+    game.clear()                    -> None
+    game.state_tensor(to_move)      -> np.ndarray [3, size, size] float32
 """
 
 from __future__ import annotations
@@ -13,99 +22,63 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ._core import Cell, Game, opponent
+from ._core import Cell, Game, opponent  # noqa: F401  (opponent bywa przydatny)
 
 
 @dataclass
 class StepResult:
-    """Wynik pojedynczego kroku srodowiska (styl Gym, ale jako dataclass)."""
+    """Wynik jednego kroku. Pola dobierz pod swój algorytm."""
 
-    obs: np.ndarray          # [3, size, size] float32 — z perspektywy gracza NA RUCHU
-    reward: float            # nagroda dla gracza, ktory WYKONAL ten ruch
-    done: bool               # czy epizod sie skonczyl
-    info: dict               # dodatki: winner, last_move, itp.
+    obs: np.ndarray
+    reward: float
+    done: bool
+    info: dict
 
 
 class GomokuEnv:
-    """Dwuosobowe, turowe srodowisko Gomoku.
-
-    Konwencja perspektywy: obserwacja jest zawsze budowana z punktu widzenia
-    gracza, ktory ma teraz ruch (kanal 0 = jego kamienie). Dzieki temu jedna
-    siec obsluguje obu graczy (self-play).
-    """
+    """Dwuosobowe, turowe środowisko Gomoku. Wypełnij metody poniżej."""
 
     def __init__(self, size: int = 20):
         self.size = size
         self._game = Game(size)
         self.to_move: Cell = Cell.Player1
-        self.done: bool = False
-        self.winner: Cell = Cell.Empty
-
-    # -- API srodowiska ----------------------------------------------------
+        # TODO: dodaj własny stan epizodu (done, winner, licznik ruchów, ...).
 
     def reset(self) -> np.ndarray:
-        self._game.clear()
-        self.to_move = Cell.Player1
-        self.done = False
-        self.winner = Cell.Empty
-        return self.observation()
+        """Wyczyść planszę, ustaw gracza startowego, zwróć pierwszą obserwację."""
+        # self._game.clear()
+        # self.to_move = Cell.Player1
+        # return self.observation()
+        raise NotImplementedError("TODO: reset()")
 
     def observation(self) -> np.ndarray:
-        """Obserwacja z perspektywy gracza na ruchu, [3, size, size] float32."""
-        return self._game.state_tensor(self.to_move)
+        """Obserwacja [3, size, size] float32 z perspektywy gracza na ruchu."""
+        # return self._game.state_tensor(self.to_move)
+        raise NotImplementedError("TODO: observation()")
+
+    def step(self, action: int) -> StepResult:
+        """Wykonaj ruch (action = y*size + x), policz nagrodę i terminację.
+
+        Szkielet do wypełnienia — rozkodowanie akcji i wygrana są za darmo:
+            x, y = action % self.size, action // self.size
+            self._game.set(x, y, self.to_move)
+            won = self._game.has_won(self.to_move, x, y)
+            ...
+            self.to_move = opponent(self.to_move)
+        """
+        raise NotImplementedError("TODO: step()")
+
+    # -- pomocnicze (opcjonalne, ale zwykle się przydają) ------------------
 
     def legal_moves(self) -> np.ndarray:
-        """Indeksy plaskie legalnych ruchow (do maskowania polityki)."""
+        """Indeksy płaskie legalnych ruchów (do maskowania polityki)."""
         return np.asarray(self._game.legal_moves(), dtype=np.int64)
 
     def legal_mask(self) -> np.ndarray:
-        """Maska bool dlugosci size*size: True = ruch dozwolony."""
+        """Maska bool długości size*size: True = ruch dozwolony."""
         mask = np.zeros(self.size * self.size, dtype=bool)
         mask[self.legal_moves()] = True
         return mask
-
-    def step(self, action: int) -> StepResult:
-        """Wykonuje ruch gracza na ruchu. `action` = y * size + x."""
-        if self.done:
-            raise RuntimeError("step() po zakonczeniu epizodu; wywolaj reset().")
-
-        x, y = action % self.size, action // self.size
-        if not self._game.is_legal(x, y):
-            # Nielegalny ruch: karzemy i konczymy epizod. Alternatywnie mozna
-            # maskowac polityke wczesniej, ale tu jest twardy bezpiecznik.
-            self.done = True
-            return StepResult(
-                obs=self.observation(),
-                reward=-1.0,
-                done=True,
-                info={"illegal": True, "action": action},
-            )
-
-        mover = self.to_move
-        self._game.set(x, y, mover)
-
-        if self._game.has_won(mover, x, y):
-            self.done = True
-            self.winner = mover
-            reward = 1.0
-        elif self._game.is_full():
-            self.done = True
-            reward = 0.0  # remis
-        else:
-            reward = 0.0
-
-        # obserwacja PO ruchu jest juz z perspektywy nastepnego gracza
-        self.to_move = opponent(self.to_move)
-        obs = self.observation()
-
-        return StepResult(
-            obs=obs,
-            reward=reward,
-            done=self.done,
-            info={"winner": self.winner, "last_move": (x, y), "by": mover},
-        )
-
-    # -- pomocnicze --------------------------------------------------------
 
     def render(self) -> str:
         """ASCII plansza: . puste, X Player1, O Player2."""
